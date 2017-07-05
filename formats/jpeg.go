@@ -11,6 +11,9 @@ import "encoding/binary"
 
 import "fmt"
 import "encoding/hex"
+import "io"
+
+const bufferSize int64 = 64 * 1024 * 1024
 
 const (
 	sequenceStart = 0xff
@@ -62,7 +65,6 @@ func findSos(buffer []byte) (int, error) {
 			return -1, fmt.Errorf("not enough space in the buffer for segment length")
 		}
 		segmentLen := int(binary.BigEndian.Uint16(buffer[pos+2 : pos+4]))
-		fmt.Printf("Segment ID=%2X, length=%d\n", segmentID, segmentLen)
 
 		pos += 2 /* id */ + segmentLen
 		if len(buffer) <= pos {
@@ -76,8 +78,8 @@ func ParseJpeg(f *os.File) (*DecodingResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	bufferSize := int(math.Min(float64(stat.Size()), float64(BufferSize)))
-	buffer := make([]byte, bufferSize)
+	size := int(math.Min(float64(stat.Size()), float64(bufferSize)))
+	buffer := make([]byte, size)
 
 	var sizeSoFar int64
 	bytesRead, err := f.Read(buffer[:])
@@ -90,13 +92,16 @@ func ParseJpeg(f *os.File) (*DecodingResult, error) {
 	pos, err := findSos(buffer)
 
 	for {
+		if err == io.EOF {
+			return nil, fmt.Errorf("could not find EOI marker before the end of image")
+		}
 		if err != nil {
 			return nil, err
 		}
 
 		buffer = buffer[:bytesRead]
 
-		for ; pos < len(buffer)-2; pos++ {
+		for ; pos < len(buffer)-1; pos++ {
 			if buffer[pos] == sequenceStart && buffer[pos+1] == eoiMarker {
 				return &DecodingResult{sizeSoFar + int64(pos) + 2}, nil
 			}
@@ -107,8 +112,6 @@ func ParseJpeg(f *os.File) (*DecodingResult, error) {
 		bytesRead++
 		pos = 0
 	}
-
-	return nil, fmt.Errorf("EOS marker not found")
 }
 
 func testJpegHeader(buffer []byte) bool {
