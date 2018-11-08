@@ -13,6 +13,67 @@ import "fmt"
 import "encoding/hex"
 import "io"
 
+type formatJpeg struct {}
+
+func (f formatJpeg) Format() string {
+	return "JPEG"
+}
+
+func (f formatJpeg) Parse(file *os.File) (*DecodingResult, error) {
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := int(math.Min(float64(stat.Size()), float64(bufferSize)))
+	buffer := make([]byte, size)
+
+	var sizeSoFar int64
+	bytesRead, err := file.Read(buffer[:])
+	if err != nil {
+		return nil, err
+	}
+
+	buffer = buffer[:bytesRead]
+
+	pos, err := findSos(buffer)
+
+	for {
+		if err == io.EOF {
+			return nil, fmt.Errorf("could not find EOI marker before the end of image")
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		buffer = buffer[:bytesRead]
+
+		for ; pos < len(buffer)-1; pos++ {
+			if buffer[pos] == sequenceStart && buffer[pos+1] == eoiMarker {
+				return &DecodingResult{sizeSoFar + int64(pos) + 2}, nil
+			}
+		}
+		buffer[0] = buffer[len(buffer)-1]
+		sizeSoFar += int64(len(buffer)) - 1
+		bytesRead, err = file.Read(buffer[1:])
+		bytesRead++
+		pos = 0
+	}
+}
+
+func (f formatJpeg) Validate(file *os.File) (bool, error) {
+	buffer := make([]byte, 16)
+	num, err := file.Read(buffer[:])
+	if err != nil {
+		return false, err
+	}
+
+	if num < 16 {
+		return false, nil
+	}
+
+	return testJpegHeader(buffer), nil
+}
+
 const bufferSize int64 = 64 * 1024 * 1024
 
 const (
@@ -40,6 +101,10 @@ const (
 	app14Marker = 0xee
 	app15Marker = 0xef
 )
+
+func testJpegHeader(buffer []byte) bool {
+	return buffer[0] == sequenceStart && buffer[1] == soiMarker
+}
 
 // Finds SOS (Start of Scan) index in the buffer.
 // Assumes that the buffer is large enough to hold all the segments
@@ -73,61 +138,3 @@ func findSos(buffer []byte) (int, error) {
 	}
 }
 
-func ParseJpeg(f *os.File) (*DecodingResult, error) {
-	stat, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	size := int(math.Min(float64(stat.Size()), float64(bufferSize)))
-	buffer := make([]byte, size)
-
-	var sizeSoFar int64
-	bytesRead, err := f.Read(buffer[:])
-	if err != nil {
-		return nil, err
-	}
-
-	buffer = buffer[:bytesRead]
-
-	pos, err := findSos(buffer)
-
-	for {
-		if err == io.EOF {
-			return nil, fmt.Errorf("could not find EOI marker before the end of image")
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		buffer = buffer[:bytesRead]
-
-		for ; pos < len(buffer)-1; pos++ {
-			if buffer[pos] == sequenceStart && buffer[pos+1] == eoiMarker {
-				return &DecodingResult{sizeSoFar + int64(pos) + 2}, nil
-			}
-		}
-		buffer[0] = buffer[len(buffer)-1]
-		sizeSoFar += int64(len(buffer)) - 1
-		bytesRead, err = f.Read(buffer[1:])
-		bytesRead++
-		pos = 0
-	}
-}
-
-func testJpegHeader(buffer []byte) bool {
-	return buffer[0] == sequenceStart && buffer[1] == soiMarker
-}
-
-func IsJpeg(f *os.File) (bool, error) {
-	buffer := make([]byte, 16)
-	num, err := f.Read(buffer[:])
-	if err != nil {
-		return false, err
-	}
-
-	if num < 16 {
-		return false, nil
-	}
-
-	return testJpegHeader(buffer), nil
-}

@@ -5,12 +5,18 @@ import "fmt"
 import "encoding/binary"
 import "io"
 
+type formatPng struct{}
+
 const pngHeader = "\x89PNG\r\n\x1a\n"
 
-func IsPNG(f *os.File) (bool, error) {
+func (f formatPng) Format() string {
+	return "PNG"
+}
+
+func (f formatPng) Validate(file *os.File) (bool, error) {
 	buf := make([]byte, len(pngHeader))
 
-	num, err := f.Read(buf)
+	num, err := file.Read(buf)
 	if err != nil {
 		return false, err
 	}
@@ -22,8 +28,8 @@ func IsPNG(f *os.File) (bool, error) {
 	return string(buf) == pngHeader, nil
 }
 
-func ParsePNG(f *os.File) (*DecodingResult, error) {
-	isPng, err := IsPNG(f)
+func (f formatPng) Parse(file *os.File) (*DecodingResult, error) {
+	isPng, err := f.Validate(file)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +39,7 @@ func ParsePNG(f *os.File) (*DecodingResult, error) {
 	buf := make([]byte, 8)
 
 	for {
-		numRead, err := f.Read(buf[:8]) // length and chunk type fields
+		numRead, err := file.Read(buf[:8]) // length and chunk type fields
 		if err == io.EOF {
 			return nil, fmt.Errorf("unexpected end of file")
 		}
@@ -46,7 +52,7 @@ func ParsePNG(f *os.File) (*DecodingResult, error) {
 
 		length := binary.BigEndian.Uint32(buf)
 		chunkType := string(buf[4:8])
-		pos, err := f.Seek(int64(length+4 /* CRC field */), io.SeekCurrent)
+		pos, err := file.Seek(int64(length+4 /* CRC field */), io.SeekCurrent)
 		if err != nil {
 			return nil, err
 		}
